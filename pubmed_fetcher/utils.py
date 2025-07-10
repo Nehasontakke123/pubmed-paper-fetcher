@@ -5,6 +5,7 @@ import requests
 import csv
 import xml.etree.ElementTree as ET
 import re
+import time  # 🕐 Delay साठी
 
 def fetch_pubmed_articles(query: str, debug: bool = False) -> List[Dict]:
     base_url = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi"
@@ -14,6 +15,7 @@ def fetch_pubmed_articles(query: str, debug: bool = False) -> List[Dict]:
         "retmax": "20",
         "retmode": "json"
     }
+
     res = requests.get(base_url, params=params)
     res.raise_for_status()
     ids = res.json()["esearchresult"].get("idlist", [])
@@ -23,22 +25,35 @@ def fetch_pubmed_articles(query: str, debug: bool = False) -> List[Dict]:
 
     articles = []
     for pmid in ids:
+        if debug:
+            print(f"[DEBUG] Fetching article for PMID: {pmid}")
+
         fetch_url = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi"
         fetch_params = {
             "db": "pubmed",
             "id": pmid,
             "retmode": "xml"
         }
-        fetch_res = requests.get(fetch_url, params=fetch_params)
-        fetch_res.raise_for_status()
-        root = ET.fromstring(fetch_res.text)
-        articles.append(root)
+
+        try:
+            fetch_res = requests.get(fetch_url, params=fetch_params, timeout=10)
+            fetch_res.raise_for_status()
+            root = ET.fromstring(fetch_res.text)
+            articles.append(root)
+        except Exception as e:
+            if debug:
+                print(f"[WARNING] Failed to fetch PMID {pmid}: {e}")
+            continue
+
+        time.sleep(0.5)  # ✅ Delay added between requests
 
     return articles
+
 
 def is_non_academic_affiliation(affiliation: str) -> bool:
     academic_keywords = ["university", "institute", "college", "school", "faculty", "dept"]
     return not any(word in affiliation.lower() for word in academic_keywords)
+
 
 def extract_relevant_info(article: ET.Element) -> Optional[Dict]:
     try:
@@ -47,7 +62,6 @@ def extract_relevant_info(article: ET.Element) -> Optional[Dict]:
         title = article_data.findtext(".//ArticleTitle")
         pub_date = article_data.findtext(".//PubDate/Year") or "N/A"
 
-        authors_info = []
         non_academic_authors = []
         companies = []
         email = ""
@@ -78,6 +92,7 @@ def extract_relevant_info(article: ET.Element) -> Optional[Dict]:
         }
     except Exception as e:
         return None
+
 
 def save_to_csv(data: List[Dict], filename: str) -> None:
     if not data:
